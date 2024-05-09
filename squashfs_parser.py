@@ -20,12 +20,12 @@ COMP = {
 
 def parse_squashfs_superblock(file_path):
 
-    # Read the first 96 bytes for superblock
+    # read the first 96 bytes for superblock
     with open(file_path, 'rb') as file:
 
         superblock_data = file.read(SQUASHFS_SUPERBLOCK_SIZE)
 
-        # Check the magic number to verify it's a SquashFS filesystem
+        # check the magic number to verify it's a squashfs
         magic_number = struct.unpack('<I', superblock_data[:4])[0]
         if magic_number == SQUASHFS_MAGIC_LE:
             superblock = struct.unpack('<5I6H8Q', superblock_data)
@@ -78,6 +78,7 @@ def parse_squashfs_inode_table(file_path, superblock_info, superblock_flags):
     start = int(superblock_info['Inode Table Start'], 16)
     end = int(superblock_info['Directory Table Start'], 16)
     block_size = int(superblock_info['Block Size'], 16)
+    method = int(superblock_info['Compression Type'], 16)
 
     i = 0
     with open(file_path, 'rb') as file:
@@ -92,31 +93,33 @@ def parse_squashfs_inode_table(file_path, superblock_info, superblock_flags):
         header = struct.unpack('<H', metadata_mask)[0]
         data_size = header & 0x7FFF  
         compressed = not (header & 0x8000)
+
+        # read data between inode  and directory tables
+        inode_data = file.read(end-(start))
         
+        # attempt to decompress metadata block(s)
         if(compressed):
-            #data = decompress_data(inode_data, type)
-            #print(data)
-            print('compressed')
-        else:
-            inode_data = file.read(end-start)
+            inode_data = decompress_data(inode_data, method)
+            if inode_data == None: exit()
+
 
         seek_offset = 0
 
+        # step through inode table metadata block(s)
         while((start + seek_offset) <= (start + data_size)):
 
             inode_data = inode_data[seek_offset:]
-            print(seek_offset)
+            
             try:
                 inode_header = struct.unpack('<4H2I', inode_data[:16])
                 
-                # zip inode header
+                # dict inode header
                 inode_hex = tuple(hex(value) for value in inode_header)
                 inode_dict = dict(zip(INODE_HEADER_KEYS, inode_hex))
                 
-                
             except:
-                #continue
-                print(f'Failed to parse inode header')
+                print(f'Failed to parse inode header: {seek_offset}.\n\t{inode_header}')
+                break
 
             try:
                 inode_type = int(inode_dict['Type'], 16)
@@ -130,7 +133,7 @@ def parse_squashfs_inode_table(file_path, superblock_info, superblock_flags):
                         inode_type_hex = tuple(hex(value) for value in inode_header)
                         inode_type_dict = dict(zip(INODE_BASIC_DIRECTORY_KEYS, inode_hex))
 
-                        inode_type_size = 16 + 16
+                        inode_type_size = 16 + 18
 
                     # BASIC FILE
                     case 2:
@@ -140,13 +143,13 @@ def parse_squashfs_inode_table(file_path, superblock_info, superblock_flags):
                         inode_struct_data = struct.unpack(inode_struct, inode_data[16:32])
                         
                         # check if the file ends with a fragment
-                        is_fragment_block_index = not (inode_struct_data[1] == 0xFFFFFFFF)
+                        is_fragment_block_index = not (inode_struct_data[1] == 0xffffffff)
 
-                        # round up to blocks needed to store
+                        # round up to full blocks required
                         inode_basic_file_size = inode_struct_data[3]
                         block_sizes_listsize = math.ceil(inode_basic_file_size / block_size)
 
-                    
+                        # round down to last full block
                         if is_fragment_block_index:
                             block_sizes_listsize = inode_basic_file_size //  block_size                
 
@@ -156,32 +159,44 @@ def parse_squashfs_inode_table(file_path, superblock_info, superblock_flags):
                         block_sizes_data = struct.unpack(inode_struct, inode_data[32:inode_list_len])
                         block_sizes_data = tuple(hex(value) for value in block_sizes_data)
 
-                        # add dynamic block sizes to dict - TODO
+                        # add dynamic block sizes to dict
                         inode_type_hex = tuple(hex(value) for value in inode_struct_data)
                         inode_type_dict = dict(zip(INODE_BASIC_FILE_KEYS, inode_type_hex))
                         block_sizes_data = {'Block Sizes':block_sizes_data}
                         inode_type_dict.update(block_sizes_data)
 
                         inode_type_size = 16 + (4 * block_sizes_listsize)
+                        
+                            
+                # merge type header with standard header and add to table
+                inode_table[f'{i}'] = (inode_dict | inode_type_dict)
+                i+=1
+                seek_offset += (16 + inode_type_size)
 
             except:
                 print(f'Failed to parse inode data')
-                continue
+                break
 
-            # append type header to standard header
-            inode_table[f'{i}'] = (inode_dict | inode_type_dict)
-            i+=1
-            seek_offset += (16 + inode_type_size)
         return inode_table
 
 # TODO
-def decompress_data(data, type):
-    try:
-        data = lzma.decompress(data)
-        return data
-    except Exception as e:
-        print(e)
-        return None
+def decompress_data(data, method):
+
+    match method:
+        case 1:
+            print('Compression Type 1')
+        case 2:
+            print('Compression Type 2')
+        case 3:
+            print('Compression Type 3')
+        case 4:
+            print('Compression Type 4')
+            try:
+                data = lzma.decompress(data)
+                return data
+            except Exception as e:
+                print(f'Failed to decompress inode table metadata blocks ({method}): {e}')
+                return None
 
 def main():
     if len(sys.argv) != 2:
@@ -197,11 +212,12 @@ def main():
     for key, value in superblock_info.items():
         print(f'{key}: {value}')
 
-    print('\nFLAGS')
     # print squashfs superblock flags
+    print('\nFLAGS')
     for key, value in superblock_flags.items():
         print(f'{key}: {value}')
 
+    # print inode table
     print('\nINODES')
     squashsfs_inode_table = parse_squashfs_inode_table(squashfs_file, superblock_info, superblock_flags)
     for key, value in squashsfs_inode_table.items():
