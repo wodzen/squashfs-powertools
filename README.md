@@ -3,7 +3,7 @@
 
 
 ### SquashFS Filesystem Design
-'''
+```
  _______________
 |               |  Important information about the archive, including
 |  Superblock   |  locations of other sections.
@@ -38,10 +38,10 @@
 |     Xattr     |  Extended attributes for items in the archive.
 |     table     |
 |_______________|
-'''
+```
 
 ### SquashFS Superblock Format
-'''
+```
 Offset   Type       Description
 0        uint32     Magic number (0x73717368)
 4        uint32     Inode count
@@ -62,7 +62,7 @@ Offset   Type       Description
 72       uint64     Directory table start
 80       uint64     Fragment table start
 88       uint64     Export table start
-'''
+```
 
 ### Resources
 
